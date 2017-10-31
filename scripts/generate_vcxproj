@@ -6,7 +6,16 @@ if ! [ -e $dest/src/Makefile ] ; then echo Makefile not found ; exit 1; fi
 
 echo Generating Visual Studio Project files in $dest
 
-function doit {
+#
+# remove the excluded files from the sources
+#
+remove_excludes () {
+  for exclude in ${excludes} ; do
+    sources=${sources/${exclude}/}
+  done
+}
+
+doit () {
   echo Generating $dest/$1.vcxproj
 
   cat vcxproj.1 > $dest/$1.vcxproj
@@ -15,6 +24,7 @@ function doit {
   echo "  <ItemGroup>" >> $dest/$1.vcxproj
   for dir in $dirs ; do
     sources="`(cd $dest/src/$dir; make sources)`"
+    remove_excludes
     for s in $sources ; do
       echo "    <ClCompile Include=\"src\\${dir}\\${s}\"/>" >> $dest/$1.vcxproj
     done
@@ -35,6 +45,7 @@ function doit {
   echo "  <ItemGroup>" >> $dest/$1.vcxproj.filters
   for dir in $dirs ; do
     sources="`(cd $dest/src/$dir; make sources)`"
+    remove_excludes
     for s in $sources ; do
       echo "    <ClCompile Include=\"src\\${dir}\\${s}\"><Filter>${dir}</Filter></ClCompile>" >> $dest/$1.vcxproj.filters
     done
@@ -50,11 +61,53 @@ function doit {
   echo "</Project>" >> $dest/$1.vcxproj.filters
 }
 
-dirs="big-int langapi util ansi-c assembler cpp java_bytecode xmllang solvers goto-symex analyses pointer-analysis goto-programs linking cbmc"
-doit cbmc
+#
+# Set the variable $dirs, which will be used in doit() as the list of directories which need to be entered
+#
 
-dirs="big-int langapi util ansi-c assembler cpp java_bytecode xmllang solvers goto-symex analyses pointer-analysis goto-programs linking jsil goto-cc"
-doit goto-cc
+cbmcdir="big-int langapi util ansi-c assembler cpp java_bytecode xmllang json miniz solvers goto-symex analyses pointer-analysis goto-programs linking goto-instrument cbmc"
 
-dirs="big-int langapi util ansi-c assembler cpp java_bytecode xmllang solvers goto-symex analyses pointer-analysis goto-programs linking goto-instrument"
-doit goto-instrument
+gotoccdir="big-int langapi util ansi-c assembler cpp java_bytecode xmllang solvers goto-symex analyses pointer-analysis goto-programs linking jsil goto-cc"
+
+gotoinstrumentdir="big-int langapi util ansi-c assembler cpp java_bytecode xmllang solvers goto-symex analyses pointer-analysis goto-programs linking goto-instrument"
+
+set_depend_dirs () {
+  case "$1" in
+    cbmc)
+      dirs=${cbmcdir}
+      excludes="goto_instrument_main.cpp"
+      ;;
+    goto-cc)
+      dirs=${gotoccdir}
+      excludes=
+      ;;
+    goto-instrument)
+      dirs=${gotoinstrumentdir}
+      excludes=
+      ;;
+    * )
+      echo "Warning: target ${1} is unknown, skipping it"
+      dirs=""
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+#
+# get targets from command line (or use defaults) and build vcxproj files
+#
+if [ 0 -lt $# ]; then
+  targets="$@"  # user-provided targets
+else
+  targets="cbmc goto-cc goto-instrument" # default targets
+fi
+
+for target in ${targets}
+do
+  set_depend_dirs ${target}
+  ok=$?
+  if [ 0 -eq $ok ]; then
+    doit $target # set_depend_dirs succeeded. Generate project files
+  fi
+done
