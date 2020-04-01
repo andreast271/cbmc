@@ -226,9 +226,13 @@ inline int __signbitd(double d) { return __CPROVER_signd(d); }
 
 inline int __signbitf(float f) { return __CPROVER_signf(f); }
 
+/* FUNCTION: __signbitl */
+
+inline int __signbitl(long double ld) { return __CPROVER_signld(ld); }
+
 /* FUNCTION: __signbit */
 
-inline int __signbit(double ld) { return __CPROVER_signld(ld); }
+inline int __signbit(double d) { return __CPROVER_signd(d); }
 
 /* FUNCTION: _dclass */
 
