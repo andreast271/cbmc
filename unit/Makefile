@@ -14,6 +14,7 @@ SRC += analyses/ai/ai.cpp \
        analyses/does_remove_const/does_expr_lose_const.cpp \
        analyses/does_remove_const/does_type_preserve_const_correctness.cpp \
        analyses/does_remove_const/is_type_at_least_as_const_as.cpp \
+       ansi-c/max_malloc_size.cpp \
        big-int/big-int.cpp \
        compound_block_locations.cpp \
        get_goto_model_from_c_test.cpp \
@@ -76,6 +77,17 @@ SRC += analyses/ai/ai.cpp \
        util/format_number_range.cpp \
        util/get_base_name.cpp \
        util/graph.cpp \
+       util/interval/add.cpp \
+       util/interval/bitwise.cpp \
+       util/interval/comparisons.cpp \
+       util/interval/divide.cpp \
+       util/interval/eval.cpp \
+       util/interval/get_extreme.cpp \
+       util/interval/modulo.cpp \
+       util/interval/multiply.cpp \
+       util/interval/shift.cpp \
+       util/interval/subtract.cpp \
+       util/interval/to_string.cpp \
        util/interval_constraint.cpp \
        util/interval_union.cpp \
        util/irep.cpp \

@@ -230,6 +230,15 @@ void recursive_initializationt::initialize(
                                {depth, address_of_exprt{lhs}}});
 }
 
+code_blockt build_null_pointer(const symbol_exprt &result_symbol)
+{
+  const typet &type_to_construct = result_symbol.type().subtype();
+  const null_pointer_exprt nullptr_expr{to_pointer_type(type_to_construct)};
+  const code_assignt assign_null{dereference_exprt{result_symbol},
+                                 nullptr_expr};
+  return code_blockt{{assign_null, code_returnt{}}};
+}
+
 code_blockt recursive_initializationt::build_constructor_body(
   const exprt &depth_symbol,
   const symbol_exprt &result_symbol,
@@ -248,6 +257,11 @@ code_blockt recursive_initializationt::build_constructor_body(
     if(type.subtype().id() == ID_code)
     {
       return build_function_pointer_constructor(result_symbol, is_nullable);
+    }
+    if(type.subtype().id() == ID_empty)
+    {
+      // always initalize void* pointers as NULL
+      return build_null_pointer(result_symbol);
     }
     if(lhs_name.has_value())
     {
@@ -458,19 +472,42 @@ std::string recursive_initialization_configt::to_string() const
   return out.str();
 }
 
+static symbolt &get_fresh_global_symbol(
+  symbol_tablet &symbol_table,
+  const std::string &symbol_base_name,
+  typet symbol_type,
+  irep_idt mode)
+{
+  source_locationt source_location{};
+  source_location.set_file(GOTO_HARNESS_PREFIX "harness.c");
+  symbolt &fresh_symbol = get_fresh_aux_symbol(
+    std::move(symbol_type),
+    GOTO_HARNESS_PREFIX,
+    symbol_base_name,
+    source_locationt{},
+    mode,
+    symbol_table);
+  fresh_symbol.base_name = fresh_symbol.pretty_name = symbol_base_name;
+  fresh_symbol.is_static_lifetime = true;
+  fresh_symbol.is_lvalue = true;
+  fresh_symbol.is_auxiliary = false;
+  fresh_symbol.is_file_local = false;
+  fresh_symbol.is_thread_local = false;
+  fresh_symbol.is_state_var = false;
+  fresh_symbol.module = GOTO_HARNESS_PREFIX "harness";
+  fresh_symbol.location = std::move(source_location);
+  return fresh_symbol;
+}
+
 irep_idt recursive_initializationt::get_fresh_global_name(
   const std::string &symbol_name,
   const exprt &initial_value) const
 {
-  symbolt &fresh_symbol = get_fresh_aux_symbol(
-    signed_int_type(),
-    CPROVER_PREFIX,
+  auto &fresh_symbol = get_fresh_global_symbol(
+    goto_model.symbol_table,
     symbol_name,
-    source_locationt{},
-    initialization_config.mode,
-    goto_model.symbol_table);
-  fresh_symbol.is_static_lifetime = true;
-  fresh_symbol.is_lvalue = true;
+    signed_int_type(), // FIXME why always signed_int_type???
+    initialization_config.mode);
   fresh_symbol.value = initial_value;
   return fresh_symbol.name;
 }
@@ -478,15 +515,11 @@ irep_idt recursive_initializationt::get_fresh_global_name(
 symbol_exprt recursive_initializationt::get_fresh_global_symexpr(
   const std::string &symbol_name) const
 {
-  symbolt &fresh_symbol = get_fresh_aux_symbol(
-    signed_int_type(),
-    CPROVER_PREFIX,
+  auto &fresh_symbol = get_fresh_global_symbol(
+    goto_model.symbol_table,
     symbol_name,
-    source_locationt{},
-    initialization_config.mode,
-    goto_model.symbol_table);
-  fresh_symbol.is_static_lifetime = true;
-  fresh_symbol.is_lvalue = true;
+    signed_int_type(),
+    initialization_config.mode);
   fresh_symbol.value = from_integer(0, signed_int_type());
   return fresh_symbol.symbol_expr();
 }
@@ -496,7 +529,7 @@ symbol_exprt recursive_initializationt::get_fresh_local_symexpr(
 {
   symbolt &fresh_symbol = get_fresh_aux_symbol(
     signed_int_type(),
-    CPROVER_PREFIX,
+    GOTO_HARNESS_PREFIX,
     symbol_name,
     source_locationt{},
     initialization_config.mode,
@@ -508,18 +541,17 @@ symbol_exprt recursive_initializationt::get_fresh_local_symexpr(
 
 symbol_exprt recursive_initializationt::get_fresh_local_typed_symexpr(
   const std::string &symbol_name,
-  const typet &type,
-  const exprt &init_value) const
+  const typet &type) const
 {
   symbolt &fresh_symbol = get_fresh_aux_symbol(
     type,
-    CPROVER_PREFIX,
+    GOTO_HARNESS_PREFIX,
     symbol_name,
     source_locationt{},
     initialization_config.mode,
     goto_model.symbol_table);
   fresh_symbol.is_lvalue = true;
-  fresh_symbol.value = init_value;
+  fresh_symbol.mode = initialization_config.mode;
   return fresh_symbol.symbol_expr();
 }
 
@@ -551,13 +583,14 @@ symbolt &recursive_initializationt::get_fresh_param_symbol(
 {
   symbolt &param_symbol = get_fresh_aux_symbol(
     symbol_type,
-    CPROVER_PREFIX,
+    GOTO_HARNESS_PREFIX,
     symbol_name,
     source_locationt{},
     initialization_config.mode,
     goto_model.symbol_table);
   param_symbol.is_parameter = true;
   param_symbol.is_lvalue = true;
+  param_symbol.mode = initialization_config.mode;
 
   return param_symbol;
 }
@@ -620,15 +653,16 @@ code_blockt recursive_initializationt::build_pointer_constructor(
   PRECONDITION(result.type().id() == ID_pointer);
   const typet &type = result.type().subtype();
   PRECONDITION(type.id() == ID_pointer);
+  PRECONDITION(type.subtype().id() != ID_empty);
 
   code_blockt body{};
-
   // build:
   // void type_constructor_ptr_T(int depth, T** result)
   // {
   //   if(has_seen && depth >= max_depth)
   //     *result=NULL;
-  //   else if(depth < min_null_tree_depth || nondet()) {
+  //     return
+  //   if(nondet()) {
   //     size_t has_seen_prev;
   //     has_seen_prev = T_has_seen;
   //     T_has_seen = 1;
@@ -655,10 +689,8 @@ code_blockt recursive_initializationt::build_pointer_constructor(
   }
 
   null_pointer_exprt nullptr_expr{pointer_type(type.subtype())};
-  code_blockt null_and_return{};
-  code_assignt assign_null{dereference_exprt{result}, nullptr_expr};
-  null_and_return.add(assign_null);
-  null_and_return.add(code_returnt{});
+  const code_assignt assign_null{dereference_exprt{result}, nullptr_expr};
+  code_blockt null_and_return{{assign_null, code_returnt{}}};
   body.add(code_ifthenelset{conjunction(should_not_recurse), null_and_return});
 
   exprt::operandst should_recurse_ops{
@@ -677,12 +709,18 @@ code_blockt recursive_initializationt::build_pointer_constructor(
     seen_assign_prev = code_assignt{*has_seen, has_seen_prev};
   }
 
+  // we want to initialize the pointee as non-const even for pointer to const
+  const typet non_const_pointer_type =
+    pointer_type(remove_const(type.subtype()));
   const symbol_exprt &local_result =
-    get_fresh_local_typed_symexpr("local_result", type, nullptr_expr);
+    get_fresh_local_typed_symexpr("local_result", non_const_pointer_type);
+
   then_case.add(code_declt{local_result});
   const namespacet ns{goto_model.symbol_table};
-  then_case.add(code_function_callt{
-    local_result, get_malloc_function(), {*size_of_expr(type.subtype(), ns)}});
+  then_case.add(
+    code_function_callt{local_result,
+                        get_malloc_function(),
+                        {*size_of_expr(non_const_pointer_type.subtype(), ns)}});
   initialize(
     dereference_exprt{local_result},
     plus_exprt{depth, from_integer(1, depth.type())},
@@ -761,7 +799,28 @@ code_blockt recursive_initializationt::build_struct_constructor(
   for(const auto &component :
       ns.follow_tag(to_struct_tag_type(struct_type)).components())
   {
-    initialize(member_exprt{dereference_exprt{result}, component}, depth, body);
+    if(component.get_is_padding())
+    {
+      continue;
+    }
+    // if the struct component is const we need to cast away the const
+    // for initialisation purposes.
+    // As far as I'm aware that's the closest thing to a 'correct' way
+    // to initialize dynamically allocated structs with const components
+    exprt component_initialisation_lhs = [&result, &component]() -> exprt {
+      auto member_expr = member_exprt{dereference_exprt{result}, component};
+      if(component.type().get_bool(ID_C_constant))
+      {
+        return dereference_exprt{
+          typecast_exprt{address_of_exprt{std::move(member_expr)},
+                         pointer_type(remove_const(component.type()))}};
+      }
+      else
+      {
+        return std::move(member_expr);
+      }
+    }();
+    initialize(component_initialisation_lhs, depth, body);
   }
   return body;
 }
@@ -784,9 +843,10 @@ code_blockt recursive_initializationt::build_dynamic_array_constructor(
   const optionalt<irep_idt> &lhs_name)
 {
   PRECONDITION(result.type().id() == ID_pointer);
-  const typet &pointer_type = result.type().subtype();
-  PRECONDITION(pointer_type.id() == ID_pointer);
-  const typet &element_type = pointer_type.subtype();
+  const typet &dynamic_array_type = result.type().subtype();
+  PRECONDITION(dynamic_array_type.id() == ID_pointer);
+  const typet &element_type = dynamic_array_type.subtype();
+  PRECONDITION(element_type.id() != ID_empty);
 
   // builds:
   // void type_constructor_ptr_T(int depth, T** result, int* size)
@@ -817,8 +877,11 @@ code_blockt recursive_initializationt::build_dynamic_array_constructor(
     binary_relation_exprt{
       nondet_size, ID_le, from_integer(max_array_size, nondet_size.type())}}});
 
+  // we want the local result to be mutable so we can initialise it
+  const typet mutable_dynamic_array_type =
+    pointer_type(remove_const(element_type));
   const symbol_exprt &local_result =
-    get_fresh_local_typed_symexpr("local_result", pointer_type, exprt{});
+    get_fresh_local_typed_symexpr("local_result", mutable_dynamic_array_type);
   body.add(code_declt{local_result});
   const namespacet ns{goto_model.symbol_table};
   for(auto array_size = min_array_size; array_size <= max_array_size;
@@ -965,6 +1028,7 @@ code_blockt recursive_initializationt::build_function_pointer_constructor(
 
   const auto function_pointer_selector =
     get_fresh_local_symexpr("function_pointer_selector");
+  body.add(code_declt{function_pointer_selector});
   body.add(
     code_assignt{function_pointer_selector,
                  side_effect_expr_nondett{function_pointer_selector.type(),

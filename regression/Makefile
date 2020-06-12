@@ -31,6 +31,9 @@ DIRS = cbmc \
        linking-goto-binaries \
        symtab2gb \
        solver-hardness \
+       goto-ld \
+       validate-trace-xml-schema \
+       cbmc-primitives \
        # Empty last line
 
 ifeq ($(OS),Windows_NT)

@@ -410,14 +410,13 @@ void java_bytecode_convert_method_lazy(
 
   if(!m.is_static)
   {
-    class_typet::methodt new_method;
-    new_method.set_name(method_symbol.name);
+    java_class_typet::methodt new_method{method_symbol.name, method_type};
     new_method.set_base_name(method_symbol.base_name);
     new_method.set_pretty_name(method_symbol.pretty_name);
     new_method.set_access(member_type.get_access());
-    new_method.type() = method_symbol.type;
+    new_method.set_descriptor(m.descriptor);
 
-    to_class_type(class_symbol.type)
+    to_java_class_type(class_symbol.type)
       .methods()
       .emplace_back(std::move(new_method));
   }
@@ -1762,7 +1761,8 @@ java_bytecode_convert_methodt::convert_instructions(const methodt &method)
     // instruction before the actual instruction:
     if(catch_instruction.has_value())
     {
-      c.make_block();
+      if(c.get_statement() != ID_block)
+        c = code_blockt{{c}};
       c.operands().insert(c.operands().begin(), *catch_instruction);
     }
 
@@ -1832,12 +1832,16 @@ java_bytecode_convert_methodt::convert_instructions(const methodt &method)
         }
         else
         {
-          c.make_block();
+          if(c.get_statement() != ID_block)
+            c = code_blockt{{c}};
+
           auto &last_statement=to_code_block(c).find_last_statement();
           if(last_statement.get_statement()==ID_goto)
           {
             // Insert stack twiddling before branch:
-            last_statement.make_block();
+            if(last_statement.get_statement() != ID_block)
+              last_statement = code_blockt{{last_statement}};
+
             last_statement.operands().insert(
               last_statement.operands().begin(),
               more_code.statements().begin(),
@@ -3252,7 +3256,7 @@ void java_bytecode_convert_method(
 }
 
 /// Returns true iff method \p methodid from class \p classname is
-/// a method inherited from a class (and not an interface!) from which
+/// a method inherited from a class or interface from which
 /// \p classname inherits, either directly or indirectly.
 /// \param classname: class whose method is referenced
 /// \param mangled_method_name: The particular overload of a given method.
@@ -3260,8 +3264,9 @@ bool java_bytecode_convert_methodt::is_method_inherited(
   const irep_idt &classname,
   const irep_idt &mangled_method_name) const
 {
-  const auto inherited_method = get_inherited_component(
-    classname, mangled_method_name, symbol_table, false);
+  const auto inherited_method = get_inherited_method_implementation(
+    mangled_method_name, classname, symbol_table);
+
   return inherited_method.has_value();
 }
 
